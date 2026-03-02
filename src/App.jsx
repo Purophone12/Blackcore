@@ -30,12 +30,8 @@ const ProtectedRoute = ({ children }) => {
     </div>
   );
 
-  // If not authenticated, we'll allow mock access for demo purposes if desired,
-  // but standard security says navigate to /auth
   if (!user && !loading) {
-    // Check if we are in demo mode (e.g. env var or just always for this task)
-    // For this task, we want the app to be fully functional, so we'll
-    // allow proceeding to the route for the demo if firebase fails
+    return <Navigate to="/auth" />;
   }
 
   return children;

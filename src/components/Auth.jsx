@@ -11,6 +11,7 @@ const Auth = () => {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [username, setUsername] = useState('');
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -19,6 +20,18 @@ const Auth = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(null);
+
+    if (!isLogin) {
+      if (password.length < 8) {
+        setError("Password must be at least 8 characters long.");
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError("Passwords do not match.");
+        return;
+      }
+    }
+
     setLoading(true);
     try {
       if (isLogin) {
@@ -32,10 +45,6 @@ const Auth = () => {
     } catch (err) {
       console.error("Auth error:", err);
       setError(err.message);
-      if (err.message.includes('YOUR_API_KEY') || err.message.includes('api-key-not-valid')) {
-         console.warn("Firebase not configured correctly, proceeding with mock user for demo");
-         navigate('/groups');
-      }
     } finally {
       setLoading(false);
     }
@@ -49,7 +58,21 @@ const Auth = () => {
             <span className="material-symbols-outlined text-4xl text-primary">lock</span>
           </div>
           <h2 className="text-4xl font-bold tracking-tighter">Blackcore</h2>
-          <p className="text-slate-400 mt-2">{isLogin ? 'Welcome back.' : 'Create your private account.'}</p>
+
+          <div className="flex bg-card-dark p-1 rounded-xl mt-8 mb-4 border border-primary/10">
+            <button
+              onClick={() => setIsLogin(true)}
+              className={`flex-1 py-2 text-xs font-bold uppercase tracking-widest rounded-lg transition-all ${isLogin ? 'bg-primary text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+            >
+              Login
+            </button>
+            <button
+              onClick={() => setIsLogin(false)}
+              className={`flex-1 py-2 text-xs font-bold uppercase tracking-widest rounded-lg transition-all ${!isLogin ? 'bg-primary text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+            >
+              Sign Up
+            </button>
+          </div>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -89,6 +112,20 @@ const Auth = () => {
             />
           </div>
 
+          {!isLogin && (
+            <div className="animate-in fade-in slide-in-from-top-2">
+              <label className="block text-xs font-bold uppercase tracking-widest text-slate-500 mb-1 ml-1">Confirm Password</label>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                className="w-full p-4 rounded-xl bg-card-dark border border-primary/10 focus:border-primary outline-none transition-all"
+                placeholder="••••••••"
+                required
+              />
+            </div>
+          )}
+
           {error && <p className="text-red-500 text-xs font-medium px-1">{error}</p>}
 
           <button
@@ -100,14 +137,6 @@ const Auth = () => {
           </button>
         </form>
 
-        <div className="text-center">
-          <button
-            onClick={() => setIsLogin(!isLogin)}
-            className="text-sm text-slate-400 hover:text-primary transition-colors"
-          >
-            {isLogin ? "Don't have an account? Sign up" : "Already have an account? Login"}
-          </button>
-        </div>
       </div>
     </div>
   );
