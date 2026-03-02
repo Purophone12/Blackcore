@@ -28,14 +28,13 @@ const Auth = () => {
         await updateProfile(userCredential.user, { displayName: username });
         // In a real app, we'd also initialize E2EE keys here
       }
-      navigate('/chat');
+      navigate('/groups');
     } catch (err) {
       console.error("Auth error:", err);
       setError(err.message);
-      // For development/demo purposes if Firebase is not configured or API key is invalid
       if (err.message.includes('YOUR_API_KEY') || err.message.includes('api-key-not-valid')) {
          console.warn("Firebase not configured correctly, proceeding with mock user for demo");
-         navigate('/chat');
+         navigate('/groups');
       }
     } finally {
       setLoading(false);
@@ -50,7 +49,7 @@ const Auth = () => {
             <span className="material-symbols-outlined text-4xl text-primary">lock</span>
           </div>
           <h2 className="text-4xl font-bold tracking-tighter">Blackcore</h2>
-          <p className="text-slate-400 mt-2">{isLogin ? 'Welcome back, operative.' : 'Initialize your secure account.'}</p>
+          <p className="text-slate-400 mt-2">{isLogin ? 'Welcome back.' : 'Create your private account.'}</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
