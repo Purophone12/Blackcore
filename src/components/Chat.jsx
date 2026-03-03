@@ -10,7 +10,9 @@ import {
   serverTimestamp,
   where,
   doc,
-  getDoc
+  getDoc,
+  updateDoc,
+  deleteField
 } from 'firebase/firestore';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { deriveGroupKey, encryptMessage, decryptMessage, encryptBlob, decryptBlob } from '../utils/crypto';
@@ -86,14 +88,15 @@ const Chat = () => {
             }
           } catch (e) {
             console.error("Decryption failed", e);
-            text = "[Decryption Failed]";
+            text = `[Decryption Error: ${e.name || 'Unknown'}]`;
           }
         }
 
         return {
           id: doc.id,
           ...data,
-          text
+          text,
+          reactions: data.reactions || {}
         };
       }));
       setMessages(fetchedMessages.reverse());
@@ -201,6 +204,30 @@ const Chat = () => {
     }
   };
 
+  const handleToggleReaction = async (messageId, emoji) => {
+    try {
+      const msgRef = doc(db, 'messages', messageId);
+      const msgDoc = await getDoc(msgRef);
+      if (!msgDoc.exists()) return;
+
+      const currentReactions = msgDoc.data().reactions || {};
+      const emojiReactions = currentReactions[emoji] || [];
+
+      let newEmojiReactions;
+      if (emojiReactions.includes(user.uid)) {
+        newEmojiReactions = emojiReactions.filter(uid => uid !== user.uid);
+      } else {
+        newEmojiReactions = [...emojiReactions, user.uid];
+      }
+
+      await updateDoc(msgRef, {
+        [`reactions.${emoji}`]: newEmojiReactions.length > 0 ? newEmojiReactions : deleteField()
+      });
+    } catch (err) {
+      console.error("Error toggling reaction:", err);
+    }
+  };
+
   const downloadFile = async (msg) => {
     try {
       const response = await fetch(`http://localhost:5001/download/${atob(msg.text)}`);
@@ -302,11 +329,33 @@ const Chat = () => {
               )}
 
               {/* Reactions Bar (Social Feature) */}
-              <div className={`absolute -bottom-3 ${msg.uid === user.uid ? 'right-0' : 'left-0'} flex gap-1`}>
-                 <div className="bg-background-dark border border-primary/20 rounded-full px-1.5 py-0.5 flex gap-1 items-center scale-90">
-                    <span className="text-[10px]">🔥</span>
-                    <span className="text-[8px] font-bold text-primary">1</span>
-                 </div>
+              <div className={`absolute -bottom-3 ${msg.uid === user.uid ? 'right-0' : 'left-0'} flex gap-1 flex-wrap`}>
+                {Object.entries(msg.reactions || {}).map(([emoji, uids]) => (
+                  <button
+                    key={emoji}
+                    onClick={() => handleToggleReaction(msg.id, emoji)}
+                    className={`bg-background-dark border rounded-full px-1.5 py-0.5 flex gap-1 items-center scale-90 transition-all ${
+                      uids.includes(user.uid) ? 'border-primary bg-primary/10' : 'border-primary/20'
+                    }`}
+                  >
+                    <span className="text-[10px]">{emoji}</span>
+                    <span className={`text-[8px] font-bold ${uids.includes(user.uid) ? 'text-primary' : 'text-slate-400'}`}>
+                      {uids.length}
+                    </span>
+                  </button>
+                ))}
+                <button
+                  onClick={() => handleToggleReaction(msg.id, '🔥')}
+                  className="opacity-0 group-hover:opacity-100 bg-background-dark border border-primary/20 rounded-full px-1.5 py-0.5 flex items-center scale-90 hover:border-primary transition-all"
+                >
+                  <span className="text-[10px]">🔥</span>
+                </button>
+                 <button
+                  onClick={() => handleToggleReaction(msg.id, '❤️')}
+                  className="opacity-0 group-hover:opacity-100 bg-background-dark border border-primary/20 rounded-full px-1.5 py-0.5 flex items-center scale-90 hover:border-primary transition-all"
+                >
+                  <span className="text-[10px]">❤️</span>
+                </button>
               </div>
 
               {msg.isEncrypted && (
