@@ -44,7 +44,10 @@ export async function generateSymmetricKey() {
  */
 export async function deriveGroupKey(groupId) {
   const c = getCrypto();
-  const appSecret = "blackcore-social-v1-shared-key-32b";
+  const appSecret = import.meta.env.VITE_APP_SECRET;
+  if (!appSecret) {
+    throw new Error("VITE_APP_SECRET environment variable is not defined");
+  }
   const encoder = new TextEncoder();
   const baseData = encoder.encode(appSecret + groupId);
 
