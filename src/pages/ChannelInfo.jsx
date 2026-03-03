@@ -200,6 +200,28 @@ function ChannelInfo() {
         />
       )}
 
+      <div className="px-6 mb-4">
+        <button
+          onClick={() => {
+            const url = window.location.origin + `/groups?invite=${groupId}`;
+            navigator.clipboard.writeText(url);
+            alert("Invite link copied to clipboard!");
+          }}
+          className="w-full flex items-center justify-between p-4 bg-primary/10 border border-primary/20 rounded-xl hover:bg-primary/20 transition-all group"
+        >
+          <div className="flex items-center gap-4">
+            <div className="text-primary flex items-center justify-center bg-primary/20 size-10 rounded-lg">
+              <span className="material-symbols-outlined">link</span>
+            </div>
+            <div className="text-left">
+              <p className="font-bold text-sm text-primary">Invite Members</p>
+              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Copy unique invitation link</p>
+            </div>
+          </div>
+          <span className="material-symbols-outlined text-primary opacity-0 group-hover:opacity-100 transition-opacity">content_copy</span>
+        </button>
+      </div>
+
       <QuickActions
         isMuted={isMuted}
         onMuteToggle={() => setIsMuted(!isMuted)}

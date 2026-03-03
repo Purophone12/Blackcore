@@ -13,13 +13,15 @@ import {
   getDoc
 } from 'firebase/firestore';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
-import { deriveGroupKey, encryptMessage, decryptMessage } from '../utils/crypto';
+import { deriveGroupKey, encryptMessage, decryptMessage, encryptBlob, decryptBlob } from '../utils/crypto';
 
 const Chat = () => {
   const { groupId } = useParams();
   const location = useLocation();
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
+  const [file, setFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(location.search.includes('search=true'));
   const [isTyping, setIsTyping] = useState(false);
@@ -76,7 +78,12 @@ const Chat = () => {
           try {
             const ciphertext = Uint8Array.from(atob(data.text), c => c.charCodeAt(0)).buffer;
             const iv = Uint8Array.from(atob(data.iv), c => c.charCodeAt(0));
-            text = await decryptMessage(ciphertext, symmetricKey, iv);
+
+            if (data.type === 'file') {
+              text = `Encrypted File: ${data.originalName}`;
+            } else {
+              text = await decryptMessage(ciphertext, symmetricKey, iv);
+            }
           } catch (e) {
             console.error("Decryption failed", e);
             text = "[Decryption Failed]";
@@ -150,6 +157,70 @@ const Chat = () => {
     }
   }, [newMessage]);
 
+  const handleFileChange = (e) => {
+    if (e.target.files[0]) {
+      setFile(e.target.files[0]);
+    }
+  };
+
+  const uploadFile = async () => {
+    if (!file || !symmetricKey) return;
+    setUploading(true);
+    try {
+      const { ciphertext, iv } = await encryptBlob(file, symmetricKey);
+      const ivBase64 = btoa(String.fromCharCode(...new Uint8Array(iv)));
+
+      const formData = new FormData();
+      formData.append('file', new Blob([ciphertext]), file.name + '.enc');
+
+      const response = await fetch('http://localhost:5001/upload', {
+        method: 'POST',
+        body: formData
+      });
+
+      const result = await response.json();
+
+      await addDoc(collection(db, 'messages'), {
+        text: btoa(result.filename), // We store the filename as text for files
+        iv: ivBase64,
+        uid: user.uid,
+        groupId: groupId,
+        displayName: user.displayName,
+        createdAt: serverTimestamp(),
+        isEncrypted: true,
+        type: 'file',
+        originalName: file.name,
+        mimetype: file.type
+      });
+
+      setFile(null);
+    } catch (err) {
+      console.error("File upload failed:", err);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const downloadFile = async (msg) => {
+    try {
+      const response = await fetch(`http://localhost:5001/download/${atob(msg.text)}`);
+      const ciphertext = await response.arrayBuffer();
+      const iv = Uint8Array.from(atob(msg.iv), c => c.charCodeAt(0));
+
+      const decryptedBlob = await decryptBlob(ciphertext, symmetricKey, iv, msg.mimetype);
+      const url = URL.createObjectURL(decryptedBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = msg.originalName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("File download failed:", err);
+    }
+  };
+
   return (
     <div className="flex flex-col h-screen bg-background-dark text-white font-display overflow-hidden">
       {/* Header */}
@@ -203,14 +274,32 @@ const Chat = () => {
               <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
                 {msg.displayName || 'Member'}
               </span>
-              <span className="text-[8px] text-slate-600 font-medium">12:42 PM</span>
+                <span className="text-[8px] text-slate-600 font-medium">
+                  {msg.createdAt?.toDate ? msg.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Just now'}
+                </span>
             </div>
             <div className={`relative group max-w-[80%] p-4 rounded-2xl shadow-lg transition-all ${
               msg.uid === user.uid
                 ? 'bg-primary text-white rounded-tr-none shadow-primary/10'
                 : 'bg-card-dark border border-primary/10 rounded-tl-none'
             }`}>
-              <p className="text-sm leading-relaxed">{msg.text}</p>
+              {msg.type === 'file' ? (
+                <div className="flex items-center gap-3 bg-black/20 p-3 rounded-xl border border-white/5">
+                  <span className="material-symbols-outlined text-3xl">description</span>
+                  <div className="flex-1 overflow-hidden">
+                    <p className="text-xs font-bold truncate">{msg.originalName}</p>
+                    <p className="text-[8px] opacity-50 uppercase font-bold tracking-widest">{msg.mimetype}</p>
+                  </div>
+                  <button
+                    onClick={() => downloadFile(msg)}
+                    className="size-8 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-sm">download</span>
+                  </button>
+                </div>
+              ) : (
+                <p className="text-sm leading-relaxed">{msg.text}</p>
+              )}
 
               {/* Reactions Bar (Social Feature) */}
               <div className={`absolute -bottom-3 ${msg.uid === user.uid ? 'right-0' : 'left-0'} flex gap-1`}>
@@ -245,11 +334,30 @@ const Chat = () => {
       )}
 
       {/* Input */}
-      <form onSubmit={sendMessage} className="p-4 bg-card-dark border-t border-primary/10">
+      <div className="px-4">
+        {file && (
+          <div className="bg-card-dark p-2 rounded-t-xl border-t border-x border-primary/20 flex items-center justify-between animate-in slide-in-from-bottom-2">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-primary">attach_file</span>
+              <span className="text-xs font-bold truncate max-w-[200px]">{file.name}</span>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={uploadFile} disabled={uploading} className="text-[10px] font-bold uppercase tracking-widest text-primary hover:underline disabled:opacity-50">
+                {uploading ? 'Uploading...' : 'Upload'}
+              </button>
+              <button onClick={() => setFile(null)} className="text-slate-500 hover:text-white">
+                <span className="material-symbols-outlined text-sm">close</span>
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+      <form onSubmit={sendMessage} className={`p-4 bg-card-dark border-t border-primary/10 ${file ? 'rounded-b-none' : ''}`}>
         <div className="flex items-center gap-2 bg-background-dark p-2 rounded-2xl border border-primary/10 focus-within:border-primary transition-all">
-          <button type="button" className="p-2 text-slate-500 hover:text-primary transition-colors">
+          <label className="p-2 text-slate-500 hover:text-primary transition-colors cursor-pointer">
+            <input type="file" className="hidden" onChange={handleFileChange} />
             <span className="material-symbols-outlined">add_circle</span>
-          </button>
+          </label>
           <input
             type="text"
             value={newMessage}

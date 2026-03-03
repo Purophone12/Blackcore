@@ -1,16 +1,68 @@
-# React + Vite
+# Blackcore - Secure E2EE Messaging Platform
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Blackcore is a high-performance, decentralized messaging platform featuring end-to-end encryption (E2EE) by default. Built with React 19, Vite, and Tailwind CSS v4.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- **End-to-End Encryption:** All messages and files are encrypted client-side using the Web Crypto API (AES-GCM).
+- **Discord-style Layout:** Multi-pane sidebar for navigating spaces and direct messages.
+- **Real-time Sync:** Powered by Firebase (Auth & Firestore) for seamless communication.
+- **Local File Storage:** Encrypted file attachments are stored on a local server rather than cloud providers.
+- **Dynamic Theming:** Customize your experience with various color protocols.
+- **Invitation System:** Easily add members to spaces via secure join links.
 
-## React Compiler
+## Getting Started
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### Prerequisites
 
-## Expanding the ESLint configuration
+- Node.js (Latest LTS recommended)
+- Firebase Project (Auth and Firestore enabled)
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+### Installation
+
+1. Clone the repository.
+2. Install client dependencies:
+   ```bash
+   npm install
+   ```
+3. Install file server dependencies:
+   ```bash
+   cd server && npm install && cd ..
+   ```
+
+### Configuration
+
+Create a `.env` file in the root directory and add your Firebase credentials:
+
+```env
+VITE_FIREBASE_API_KEY=your_api_key
+VITE_FIREBASE_AUTH_DOMAIN=your_auth_domain
+VITE_FIREBASE_PROJECT_ID=your_project_id
+VITE_FIREBASE_STORAGE_BUCKET=your_storage_bucket
+VITE_FIREBASE_MESSAGING_SENDER_ID=your_messaging_sender_id
+VITE_FIREBASE_APP_ID=your_app_id
+```
+
+### Running the Application
+
+You need to run both the Vite development server and the local file server.
+
+1. **Start the File Server:**
+   ```bash
+   node server/index.js
+   ```
+   The file server will run at `http://localhost:5001`.
+
+2. **Start the Vite Frontend:**
+   ```bash
+   npm run dev
+   ```
+   The frontend will run at `http://localhost:5173`.
+
+## Security
+
+Blackcore uses a "Zero Trust" architecture. Even if our servers are compromised, your data remains encrypted and inaccessible to unauthorized parties. Each space uses a unique derived key for its communications.
+
+## License
+
+MIT

@@ -1,6 +1,8 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import Auth from './components/Auth';
+import Landing from './pages/Landing';
+import Login from './pages/Login';
+import Signup from './pages/Signup';
 import Sidebar from './components/Sidebar';
 import Groups from './components/Groups';
 import Chat from './components/Chat';
@@ -31,7 +33,7 @@ const ProtectedRoute = ({ children }) => {
   );
 
   if (!user && !loading) {
-    return <Navigate to="/auth" />;
+    return <Navigate to="/login" />;
   }
 
   return children;
@@ -53,8 +55,9 @@ function App() {
     <ThemeContext.Provider value={{ themeColor, setThemeColor }}>
     <Router>
       <Routes>
-        <Route path="/" element={<Auth />} />
-        <Route path="/auth" element={<Auth />} />
+        <Route path="/" element={<Landing />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/signup" element={<Signup />} />
         <Route
           path="/groups"
           element={

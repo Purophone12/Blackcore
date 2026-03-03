@@ -98,6 +98,42 @@ export async function decryptMessage(ciphertext, key, iv) {
   return dec.decode(decrypted);
 }
 
+// Encrypt a binary Blob or File using AES-GCM
+export async function encryptBlob(blob, key) {
+  const c = getCrypto();
+  const arrayBuffer = await blob.arrayBuffer();
+  const iv = c.getRandomValues(new Uint8Array(12));
+
+  const ciphertext = await c.subtle.encrypt(
+    {
+      name: "AES-GCM",
+      iv: iv,
+    },
+    key,
+    arrayBuffer
+  );
+
+  return {
+    ciphertext: ciphertext,
+    iv: iv
+  };
+}
+
+// Decrypt a binary ArrayBuffer to a Blob using AES-GCM
+export async function decryptBlob(ciphertext, key, iv, mimetype) {
+  const c = getCrypto();
+  const decrypted = await c.subtle.decrypt(
+    {
+      name: "AES-GCM",
+      iv: iv,
+    },
+    key,
+    ciphertext
+  );
+
+  return new Blob([decrypted], { type: mimetype });
+}
+
 // Export a key to a format that can be stored or transmitted
 export async function exportKey(key) {
   const c = getCrypto();

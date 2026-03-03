@@ -8,10 +8,12 @@ import {
   serverTimestamp
 } from 'firebase/firestore';
 import { updateProfile } from 'firebase/auth';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { doc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore';
 
 const Groups = () => {
   const [groups, setGroups] = useState([]);
+  const location = useLocation();
   const [newGroupName, setNewGroupName] = useState('');
   const [loading, setLoading] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
@@ -21,6 +23,25 @@ const Groups = () => {
 
   useEffect(() => {
     setNewDisplayName(user.displayName || 'User');
+
+    // Handle Invite Link
+    const params = new URLSearchParams(location.search);
+    const inviteId = params.get('invite');
+    if (inviteId && user.uid !== 'mock-uid') {
+      const handleInvite = async () => {
+        try {
+          const groupRef = doc(db, 'groups', inviteId);
+          await updateDoc(groupRef, {
+            members: arrayUnion(user.uid)
+          });
+          navigate(`/chat/${inviteId}`);
+        } catch (err) {
+          console.error("Invite processing failed:", err);
+        }
+      };
+      handleInvite();
+    }
+
     const q = query(collection(db, 'groups'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const fetchedGroups = snapshot.docs.map(doc => ({
