@@ -1,6 +1,4 @@
 import React, { useState } from 'react';
-import { auth } from '../firebase';
-import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { useNavigate, Link } from 'react-router-dom';
 
 const Signup = () => {
@@ -27,8 +25,16 @@ const Signup = () => {
 
     setLoading(true);
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      await updateProfile(userCredential.user, { displayName: username });
+      const response = await fetch('http://localhost:5001/api/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, username })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Signup failed');
+
+      localStorage.setItem('blackcore_user', JSON.stringify(data.user));
+      localStorage.setItem('blackcore_token', data.token);
       navigate('/groups');
     } catch (err) {
       console.error("Signup error:", err);

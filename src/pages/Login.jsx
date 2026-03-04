@@ -1,6 +1,4 @@
 import React, { useState } from 'react';
-import { auth } from '../firebase';
-import { signInWithEmailAndPassword } from 'firebase/auth';
 import { useNavigate, Link } from 'react-router-dom';
 
 const Login = () => {
@@ -15,7 +13,16 @@ const Login = () => {
     setError(null);
     setLoading(true);
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      const response = await fetch('http://localhost:5001/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Login failed');
+
+      localStorage.setItem('blackcore_user', JSON.stringify(data.user));
+      localStorage.setItem('blackcore_token', data.token);
       navigate('/groups');
     } catch (err) {
       console.error("Login error:", err);

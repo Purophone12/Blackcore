@@ -7,8 +7,6 @@ import Sidebar from './components/Sidebar';
 import Groups from './components/Groups';
 import Chat from './components/Chat';
 import ChannelInfo from './pages/ChannelInfo';
-import { auth } from './firebase';
-import { useAuthState } from 'react-firebase-hooks/auth';
 
 export const ThemeContext = React.createContext();
 
@@ -24,15 +22,9 @@ const MainLayout = ({ children }) => (
 
 // Wrapper for protected routes
 const ProtectedRoute = ({ children }) => {
-  const [user, loading] = useAuthState(auth);
+  const user = JSON.parse(localStorage.getItem('blackcore_user'));
 
-  if (loading) return (
-    <div className="flex items-center justify-center min-h-screen bg-background-dark">
-      <div className="size-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-    </div>
-  );
-
-  if (!user && !loading) {
+  if (!user) {
     return <Navigate to="/login" />;
   }
 

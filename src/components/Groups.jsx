@@ -1,39 +1,56 @@
 import React, { useState, useEffect } from 'react';
-import { db, auth } from '../firebase';
-import {
-  collection,
-  addDoc,
-  query,
-  onSnapshot,
-  serverTimestamp
-} from 'firebase/firestore';
-import { updateProfile } from 'firebase/auth';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { doc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore';
 
 const Groups = () => {
   const [groups, setGroups] = useState([]);
+  const [users, setUsers] = useState([]);
   const location = useLocation();
   const [newGroupName, setNewGroupName] = useState('');
   const [loading, setLoading] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [newDisplayName, setNewDisplayName] = useState('');
   const navigate = useNavigate();
-  const user = auth.currentUser || { displayName: 'User', uid: 'mock-uid' };
+
+  const user = JSON.parse(localStorage.getItem('blackcore_user')) || { username: 'User', id: 'mock-uid' };
+  const token = localStorage.getItem('blackcore_token');
+
+  const fetchGroups = async () => {
+    if (!token) return;
+    try {
+      const response = await fetch('http://localhost:5001/api/groups', {
+          headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await response.json();
+      setGroups(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Error fetching groups:", err);
+    }
+  };
 
   useEffect(() => {
-    setNewDisplayName(user.displayName || 'User');
+    setNewDisplayName(user.username);
+    fetchGroups();
 
     // Handle Invite Link
     const params = new URLSearchParams(location.search);
     const inviteId = params.get('invite');
-    if (inviteId && user.uid !== 'mock-uid') {
+    if (inviteId && user.id !== 'mock-uid' && token) {
       const handleInvite = async () => {
         try {
-          const groupRef = doc(db, 'groups', inviteId);
-          await updateDoc(groupRef, {
-            members: arrayUnion(user.uid)
+          const res = await fetch(`http://localhost:5001/api/groups/${inviteId}`, {
+              headers: { 'Authorization': `Bearer ${token}` }
           });
+          const group = await res.json();
+          if (group && !group.members.includes(user.id)) {
+            await fetch(`http://localhost:5001/api/groups/${inviteId}`, {
+              method: 'PUT',
+              headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${token}`
+              },
+              body: JSON.stringify({ members: [...group.members, user.id] })
+            });
+          }
           navigate(`/chat/${inviteId}`);
         } catch (err) {
           console.error("Invite processing failed:", err);
@@ -41,59 +58,49 @@ const Groups = () => {
       };
       handleInvite();
     }
-
-    const q = query(collection(db, 'groups'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const fetchedGroups = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setGroups(fetchedGroups);
-    }, (err) => {
-      console.error("Error fetching groups:", err);
-      if (groups.length === 0) {
-        setGroups([
-          { id: 'dev-team', name: 'General Chat', description: 'Hang out and talk about anything.' },
-          { id: 'ops', name: 'Project Updates', description: 'Keep up with the latest news.' }
-        ]);
-      }
-    });
-
-    return () => unsubscribe();
-  }, [user.displayName]);
+  }, [location.search]);
 
   const createGroup = async (e) => {
     e.preventDefault();
-    if (!newGroupName.trim()) return;
+    if (!newGroupName.trim() || !token) return;
     setLoading(true);
     try {
-      const docRef = await addDoc(collection(db, 'groups'), {
-        name: newGroupName,
-        description: 'A new community space.',
-        owner: user.uid,
-        createdAt: serverTimestamp(),
-        members: [user.uid]
+      const response = await fetch('http://localhost:5001/api/groups', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          name: newGroupName,
+          description: 'A new community space.',
+          owner: user.id,
+          members: [user.id]
+        })
       });
+      const newGroup = await response.json();
       setNewGroupName('');
-      navigate(`/chat/${docRef.id}`);
+      navigate(`/chat/${newGroup.id}`);
     } catch (err) {
       console.error("Error creating group:", err);
-      navigate(`/chat/mock-group-${Date.now()}`);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleUpdateProfile = async () => {
-    try {
-      if (auth.currentUser) {
-        await updateProfile(auth.currentUser, { displayName: newDisplayName });
-      }
-      setIsEditingProfile(false);
-    } catch (err) {
-      console.error("Profile update failed", err);
-      setIsEditingProfile(false);
-    }
+  const handleUpdateProfile = () => {
+    const updatedUser = { ...user, username: newDisplayName };
+    localStorage.setItem('blackcore_user', JSON.stringify(updatedUser));
+    setIsEditingProfile(false);
+    // Note: This only updates local display name, not server-side.
+    // For a real app, you'd add an /api/users/profile endpoint.
+    window.location.reload();
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('blackcore_user');
+    localStorage.removeItem('blackcore_token');
+    navigate('/');
   };
 
   return (
@@ -103,14 +110,14 @@ const Groups = () => {
           <div className="flex items-center gap-4">
              <div className="size-12 rounded-xl bg-gradient-to-br from-primary to-purple-900 p-0.5 shadow-lg shadow-primary/20">
                 <div className="w-full h-full rounded-lg bg-card-dark flex items-center justify-center text-primary font-bold">
-                   {user.displayName?.charAt(0) || 'U'}
+                   {user.username?.charAt(0) || 'U'}
                 </div>
              </div>
              <div>
                 {isEditingProfile ? (
                    <div className="flex gap-2 items-center">
                       <input
-                        className="bg-card-dark border border-primary/20 rounded-lg px-2 py-1 text-sm outline-none focus:border-primary"
+                        className="bg-card-dark border border-primary/20 rounded-lg px-2 py-1 text-sm outline-none focus:border-primary text-white"
                         value={newDisplayName}
                         onChange={(e) => setNewDisplayName(e.target.value)}
                         autoFocus
@@ -121,14 +128,14 @@ const Groups = () => {
                    </div>
                 ) : (
                    <div className="flex items-center gap-2 group cursor-pointer" onClick={() => setIsEditingProfile(true)}>
-                      <h1 className="text-xl font-bold tracking-tight">{user.displayName || 'User'}</h1>
+                      <h1 className="text-xl font-bold tracking-tight">{user.username || 'User'}</h1>
                       <span className="material-symbols-outlined text-sm text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity">edit</span>
                    </div>
                 )}
                 <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Online</p>
              </div>
           </div>
-          <button onClick={() => auth.signOut()} className="p-2 text-slate-500 hover:text-red-500 transition-colors">
+          <button onClick={handleLogout} className="p-2 text-slate-500 hover:text-red-500 transition-colors">
             <span className="material-symbols-outlined">logout</span>
           </button>
         </header>
@@ -144,7 +151,7 @@ const Groups = () => {
             value={newGroupName}
             onChange={(e) => setNewGroupName(e.target.value)}
             placeholder="New group name..."
-            className="flex-1 bg-transparent outline-none text-sm py-2 px-3"
+            className="flex-1 bg-transparent outline-none text-sm py-2 px-3 text-white"
           />
           <button type="submit" disabled={loading} className="bg-primary px-4 py-2 rounded-xl hover:bg-primary/80 transition-all font-bold text-xs uppercase tracking-widest">
             {loading ? '...' : 'Create'}
@@ -153,7 +160,7 @@ const Groups = () => {
 
         <div className="space-y-3">
           <h3 className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500 px-1">Your Chats</h3>
-          {groups.map((group) => (
+          {groups.filter(g => !g.isDM && g.members.includes(user.id)).map((group) => (
             <button
               key={group.id}
               onClick={() => navigate(`/chat/${group.id}`)}
@@ -170,6 +177,42 @@ const Groups = () => {
               </div>
               <span className="material-symbols-outlined text-slate-600 group-hover:text-primary transition-colors">chevron_right</span>
             </button>
+          ))}
+        </div>
+
+        <div className="space-y-3 pt-4 border-t border-primary/5">
+          <h3 className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500 px-1">Discover</h3>
+          {groups.filter(g => !g.isDM && !g.members.includes(user.id)).map((group) => (
+            <div
+              key={group.id}
+              className="w-full flex items-center justify-between p-4 bg-card-dark/40 rounded-xl border border-transparent transition-all group"
+            >
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-lg bg-slate-800 flex items-center justify-center text-slate-600 border border-white/5">
+                  <span className="material-symbols-outlined">public</span>
+                </div>
+                <div className="text-left">
+                  <p className="font-bold text-sm text-slate-400">{group.name}</p>
+                  <p className="text-[10px] text-slate-600 line-clamp-1">{group.description}</p>
+                </div>
+              </div>
+              <button
+                onClick={async () => {
+                   await fetch(`http://localhost:5001/api/groups/${group.id}`, {
+                      method: 'PUT',
+                      headers: {
+                          'Content-Type': 'application/json',
+                          'Authorization': `Bearer ${token}`
+                      },
+                      body: JSON.stringify({ members: [...group.members, user.id] })
+                   });
+                   fetchGroups();
+                }}
+                className="text-[10px] font-bold uppercase tracking-widest text-primary hover:underline"
+              >
+                Join
+              </button>
+            </div>
           ))}
         </div>
       </div>
