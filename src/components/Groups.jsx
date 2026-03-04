@@ -1,86 +1,83 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { db, auth } from '../firebase';
+import { collection, query, where, onSnapshot, doc, addDoc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { useAuthState } from 'react-firebase-hooks/auth';
+import { updateProfile } from 'firebase/auth';
 
 const Groups = () => {
   const [groups, setGroups] = useState([]);
-  const [users, setUsers] = useState([]);
   const location = useLocation();
   const [newGroupName, setNewGroupName] = useState('');
   const [loading, setLoading] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [newDisplayName, setNewDisplayName] = useState('');
   const navigate = useNavigate();
-
-  const user = JSON.parse(localStorage.getItem('blackcore_user')) || { username: 'User', id: 'mock-uid' };
-  const token = localStorage.getItem('blackcore_token');
-
-  const fetchGroups = async () => {
-    if (!token) return;
-    try {
-      const response = await fetch('http://localhost:5001/api/groups', {
-          headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = await response.json();
-      setGroups(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error("Error fetching groups:", err);
-    }
-  };
+  const [user] = useAuthState(auth);
 
   useEffect(() => {
-    setNewDisplayName(user.username);
-    fetchGroups();
+    if (!user) return;
+    setNewDisplayName(user.displayName || user.email.split('@')[0]);
+
+    // Listen for all public groups (non-DM)
+    // Note: To use 'isDM', '==', false, you might need a composite index.
+    // Using 'isDM', '!=', true is usually okay but can be tricky with composite queries.
+    const q = query(collection(db, 'groups'), where('isDM', '==', false));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const gData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setGroups(gData);
+    }, (err) => {
+      console.error("Firestore groups query error:", err);
+      // Fallback if index is missing
+      const q2 = query(collection(db, 'groups'));
+      onSnapshot(q2, (snapshot) => {
+         const gData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).filter(g => !g.isDM);
+         setGroups(gData);
+      });
+    });
 
     // Handle Invite Link
     const params = new URLSearchParams(location.search);
     const inviteId = params.get('invite');
-    if (inviteId && user.id !== 'mock-uid' && token) {
+    if (inviteId) {
       const handleInvite = async () => {
         try {
-          const res = await fetch(`http://localhost:5001/api/groups/${inviteId}`, {
-              headers: { 'Authorization': `Bearer ${token}` }
-          });
-          const group = await res.json();
-          if (group && !group.members.includes(user.id)) {
-            await fetch(`http://localhost:5001/api/groups/${inviteId}`, {
-              method: 'PUT',
-              headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${token}`
-              },
-              body: JSON.stringify({ members: [...group.members, user.id] })
-            });
+          const docRef = doc(db, 'groups', inviteId);
+          const groupSnap = await getDoc(docRef);
+          if (groupSnap.exists()) {
+            const data = groupSnap.data();
+            if (!data.members.includes(user.uid)) {
+              await updateDoc(docRef, {
+                members: arrayUnion(user.uid)
+              });
+            }
+            navigate(`/chat/${inviteId}`);
           }
-          navigate(`/chat/${inviteId}`);
         } catch (err) {
           console.error("Invite processing failed:", err);
         }
       };
       handleInvite();
     }
-  }, [location.search]);
+
+    return () => unsubscribe();
+  }, [user, location.search]);
 
   const createGroup = async (e) => {
     e.preventDefault();
-    if (!newGroupName.trim() || !token) return;
+    if (!newGroupName.trim() || !user) return;
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:5001/api/groups', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          name: newGroupName,
-          description: 'A new community space.',
-          owner: user.id,
-          members: [user.id]
-        })
+      const docRef = await addDoc(collection(db, 'groups'), {
+        name: newGroupName,
+        description: 'A new community space.',
+        owner: user.uid,
+        members: [user.uid],
+        isDM: false,
+        createdAt: new Date().toISOString()
       });
-      const newGroup = await response.json();
       setNewGroupName('');
-      navigate(`/chat/${newGroup.id}`);
+      navigate(`/chat/${docRef.id}`);
     } catch (err) {
       console.error("Error creating group:", err);
     } finally {
@@ -88,20 +85,23 @@ const Groups = () => {
     }
   };
 
-  const handleUpdateProfile = () => {
-    const updatedUser = { ...user, username: newDisplayName };
-    localStorage.setItem('blackcore_user', JSON.stringify(updatedUser));
-    setIsEditingProfile(false);
-    // Note: This only updates local display name, not server-side.
-    // For a real app, you'd add an /api/users/profile endpoint.
-    window.location.reload();
+  const handleUpdateProfile = async () => {
+    if (!user) return;
+    try {
+      await updateProfile(user, { displayName: newDisplayName });
+      setIsEditingProfile(false);
+    } catch (err) {
+      console.error("Profile update failed:", err);
+    }
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('blackcore_user');
-    localStorage.removeItem('blackcore_token');
+    auth.signOut();
     navigate('/');
   };
+
+  const myGroups = groups.filter(g => g.members?.includes(user?.uid));
+  const otherGroups = groups.filter(g => !g.members?.includes(user?.uid));
 
   return (
     <div className="flex flex-col h-full bg-background-dark text-white font-display p-8 overflow-y-auto">
@@ -110,7 +110,7 @@ const Groups = () => {
           <div className="flex items-center gap-4">
              <div className="size-12 rounded-xl bg-gradient-to-br from-primary to-purple-900 p-0.5 shadow-lg shadow-primary/20">
                 <div className="w-full h-full rounded-lg bg-card-dark flex items-center justify-center text-primary font-bold">
-                   {user.username?.charAt(0) || 'U'}
+                   {user?.displayName?.charAt(0) || user?.email?.charAt(0) || 'U'}
                 </div>
              </div>
              <div>
@@ -128,7 +128,7 @@ const Groups = () => {
                    </div>
                 ) : (
                    <div className="flex items-center gap-2 group cursor-pointer" onClick={() => setIsEditingProfile(true)}>
-                      <h1 className="text-xl font-bold tracking-tight">{user.username || 'User'}</h1>
+                      <h1 className="text-xl font-bold tracking-tight">{user?.displayName || user?.email?.split('@')[0] || 'User'}</h1>
                       <span className="material-symbols-outlined text-sm text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity">edit</span>
                    </div>
                 )}
@@ -160,7 +160,7 @@ const Groups = () => {
 
         <div className="space-y-3">
           <h3 className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500 px-1">Your Chats</h3>
-          {groups.filter(g => !g.isDM && g.members.includes(user.id)).map((group) => (
+          {myGroups.map((group) => (
             <button
               key={group.id}
               onClick={() => navigate(`/chat/${group.id}`)}
@@ -178,11 +178,12 @@ const Groups = () => {
               <span className="material-symbols-outlined text-slate-600 group-hover:text-primary transition-colors">chevron_right</span>
             </button>
           ))}
+          {myGroups.length === 0 && <p className="text-xs text-slate-600 px-1 italic">You haven't joined any groups yet.</p>}
         </div>
 
         <div className="space-y-3 pt-4 border-t border-primary/5">
           <h3 className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500 px-1">Discover</h3>
-          {groups.filter(g => !g.isDM && !g.members.includes(user.id)).map((group) => (
+          {otherGroups.map((group) => (
             <div
               key={group.id}
               className="w-full flex items-center justify-between p-4 bg-card-dark/40 rounded-xl border border-transparent transition-all group"
@@ -198,15 +199,9 @@ const Groups = () => {
               </div>
               <button
                 onClick={async () => {
-                   await fetch(`http://localhost:5001/api/groups/${group.id}`, {
-                      method: 'PUT',
-                      headers: {
-                          'Content-Type': 'application/json',
-                          'Authorization': `Bearer ${token}`
-                      },
-                      body: JSON.stringify({ members: [...group.members, user.id] })
+                   await updateDoc(doc(db, 'groups', group.id), {
+                      members: arrayUnion(user.uid)
                    });
-                   fetchGroups();
                 }}
                 className="text-[10px] font-bold uppercase tracking-widest text-primary hover:underline"
               >
@@ -214,6 +209,7 @@ const Groups = () => {
               </button>
             </div>
           ))}
+          {otherGroups.length === 0 && <p className="text-xs text-slate-600 px-1 italic">No other groups to discover.</p>}
         </div>
       </div>
     </div>

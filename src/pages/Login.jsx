@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { auth } from '../firebase';
+import { signInWithEmailAndPassword } from 'firebase/auth';
 import { useNavigate, Link } from 'react-router-dom';
 
 const Login = () => {
@@ -13,16 +15,7 @@ const Login = () => {
     setError(null);
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:5001/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Login failed');
-
-      localStorage.setItem('blackcore_user', JSON.stringify(data.user));
-      localStorage.setItem('blackcore_token', data.token);
+      await signInWithEmailAndPassword(auth, email, password);
       navigate('/groups');
     } catch (err) {
       console.error("Login error:", err);
@@ -50,7 +43,7 @@ const Login = () => {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full p-4 rounded-xl bg-card-dark border border-primary/10 focus:border-primary outline-none transition-all shadow-lg shadow-primary/5"
+              className="w-full p-4 rounded-xl bg-card-dark border border-primary/10 focus:border-primary outline-none transition-all shadow-lg shadow-primary/5 text-white"
               placeholder="name@blackcore.io"
               required
             />
@@ -61,7 +54,7 @@ const Login = () => {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full p-4 rounded-xl bg-card-dark border border-primary/10 focus:border-primary outline-none transition-all shadow-lg shadow-primary/5"
+              className="w-full p-4 rounded-xl bg-card-dark border border-primary/10 focus:border-primary outline-none transition-all shadow-lg shadow-primary/5 text-white"
               placeholder="••••••••"
               required
             />

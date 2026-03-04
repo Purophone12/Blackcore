@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { auth } from '../firebase';
+import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { useNavigate, Link } from 'react-router-dom';
 
 const Signup = () => {
@@ -25,16 +27,8 @@ const Signup = () => {
 
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:5001/api/signup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, username })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Signup failed');
-
-      localStorage.setItem('blackcore_user', JSON.stringify(data.user));
-      localStorage.setItem('blackcore_token', data.token);
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      await updateProfile(userCredential.user, { displayName: username });
       navigate('/groups');
     } catch (err) {
       console.error("Signup error:", err);
@@ -62,7 +56,7 @@ const Signup = () => {
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full p-4 rounded-xl bg-card-dark border border-primary/10 focus:border-primary outline-none transition-all shadow-lg shadow-primary/5"
+              className="w-full p-4 rounded-xl bg-card-dark border border-primary/10 focus:border-primary outline-none transition-all shadow-lg shadow-primary/5 text-white"
               placeholder="Agent Zero"
               required
             />
@@ -73,7 +67,7 @@ const Signup = () => {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full p-4 rounded-xl bg-card-dark border border-primary/10 focus:border-primary outline-none transition-all shadow-lg shadow-primary/5"
+              className="w-full p-4 rounded-xl bg-card-dark border border-primary/10 focus:border-primary outline-none transition-all shadow-lg shadow-primary/5 text-white"
               placeholder="name@blackcore.io"
               required
             />
@@ -84,7 +78,7 @@ const Signup = () => {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full p-4 rounded-xl bg-card-dark border border-primary/10 focus:border-primary outline-none transition-all shadow-lg shadow-primary/5"
+              className="w-full p-4 rounded-xl bg-card-dark border border-primary/10 focus:border-primary outline-none transition-all shadow-lg shadow-primary/5 text-white"
               placeholder="••••••••"
               required
             />
@@ -95,7 +89,7 @@ const Signup = () => {
               type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              className="w-full p-4 rounded-xl bg-card-dark border border-primary/10 focus:border-primary outline-none transition-all shadow-lg shadow-primary/5"
+              className="w-full p-4 rounded-xl bg-card-dark border border-primary/10 focus:border-primary outline-none transition-all shadow-lg shadow-primary/5 text-white"
               placeholder="••••••••"
               required
             />

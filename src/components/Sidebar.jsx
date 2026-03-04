@@ -1,72 +1,81 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { db, auth } from '../firebase';
+import { collection, query, where, onSnapshot, doc, setDoc, addDoc } from 'firebase/firestore';
+import { useAuthState } from 'react-firebase-hooks/auth';
 
 const Sidebar = () => {
   const [groups, setGroups] = useState([]);
-  const [users, setUsers] = useState([]);
+  const [discoveredUsers, setDiscoveredUsers] = useState([]);
   const navigate = useNavigate();
   const { groupId: currentGroupId } = useParams();
-
-  const user = JSON.parse(localStorage.getItem('blackcore_user')) || { username: 'User', id: 'mock-uid' };
-  const token = localStorage.getItem('blackcore_token');
-
-  const fetchData = async () => {
-    if (!token) return;
-    try {
-      const gRes = await fetch('http://localhost:5001/api/groups', {
-          headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const gData = await gRes.json();
-      setGroups(Array.isArray(gData) ? gData : []);
-
-      const uRes = await fetch('http://localhost:5001/api/users', {
-          headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const uData = await uRes.json();
-      setUsers(uData.filter(u => u.id !== user.id));
-    } catch (err) {
-      console.error("Sidebar fetch error:", err);
-    }
-  };
+  const [user] = useAuthState(auth);
 
   useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
-  }, []);
+    if (!user) return;
+
+    // Listen for groups where user is a member
+    const groupsQuery = query(
+      collection(db, 'groups'),
+      where('members', 'array-contains', user.uid)
+    );
+
+    const unsubscribeGroups = onSnapshot(groupsQuery, (snapshot) => {
+      const gData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setGroups(gData);
+
+      // Discover users from member lists of shared groups
+      const userMap = new Map();
+      gData.forEach(g => {
+         if (g.members) {
+            g.members.forEach(mid => {
+               if (mid !== user.uid) {
+                  // In a real app, you'd need a way to resolve mid to a name
+                  // without a global users collection.
+                  // For now, we use a placeholder or the DM name if available.
+                  if (g.isDM) {
+                     // Extract other user's name from DM title: "DM: Me & Other"
+                     const otherName = g.name.split('&')[1]?.trim() || mid;
+                     userMap.set(mid, { id: mid, username: otherName });
+                  } else {
+                     if (!userMap.has(mid)) {
+                        userMap.set(mid, { id: mid, username: `Member ${mid.slice(0, 4)}` });
+                     }
+                  }
+               }
+            });
+         }
+      });
+      setDiscoveredUsers(Array.from(userMap.values()));
+    });
+
+    return () => unsubscribeGroups();
+  }, [user]);
 
   const handleLogout = () => {
-    localStorage.removeItem('blackcore_user');
+    auth.signOut();
     navigate('/');
   };
 
   const startDM = async (otherUser) => {
-    const dmName = `DM: ${user.username} & ${otherUser.username}`;
-    // Check if DM already exists
-    const existingDM = groups.find(g => g.isDM && g.members.includes(user.id) && g.members.includes(otherUser.id));
+    const dmId = user.uid < otherUser.id ? `${user.uid}_${otherUser.id}` : `${otherUser.id}_${user.uid}`;
 
+    const existingDM = groups.find(g => g.id === dmId);
     if (existingDM) {
       navigate(`/chat/${existingDM.id}`);
       return;
     }
 
     try {
-      const response = await fetch('http://localhost:5001/api/groups', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          name: dmName,
-          description: `Direct message between ${user.username} and ${otherUser.username}`,
-          owner: user.id,
-          members: [user.id, otherUser.id],
-          isDM: true
-        })
+      await setDoc(doc(db, 'groups', dmId), {
+        name: `DM: ${user.displayName || 'Me'} & ${otherUser.username}`,
+        description: `Direct message`,
+        owner: user.uid,
+        members: [user.uid, otherUser.id],
+        isDM: true,
+        createdAt: new Date().toISOString()
       });
-      const newDM = await response.json();
-      navigate(`/chat/${newDM.id}`);
+      navigate(`/chat/${dmId}`);
     } catch (err) {
       console.error("Error creating DM:", err);
     }
@@ -78,9 +87,11 @@ const Sidebar = () => {
       <header className="p-4 border-b border-primary/5 flex items-center justify-between bg-card-dark/30">
         <div className="flex items-center gap-3">
            <div className="size-8 rounded-lg bg-primary/20 flex items-center justify-center text-primary font-bold text-xs shadow-glow">
-              {user.username?.charAt(0) || 'U'}
+              {user?.displayName?.charAt(0) || user?.email?.charAt(0) || 'U'}
            </div>
-           <span className="font-bold text-sm tracking-tight text-slate-200 truncate max-w-[120px]">{user.username || 'User'}</span>
+           <span className="font-bold text-sm tracking-tight text-slate-200 truncate max-w-[120px]">
+             {user?.displayName || user?.email?.split('@')[0] || 'User'}
+           </span>
         </div>
         <button onClick={() => navigate('/groups')} className="p-1.5 text-slate-500 hover:text-primary transition-colors rounded-lg hover:bg-primary/5">
            <span className="material-symbols-outlined text-sm">settings</span>
@@ -101,9 +112,9 @@ const Sidebar = () => {
         </div>
 
         <div>
-          <h3 className="px-3 py-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Direct Messages</h3>
+          <h3 className="px-3 py-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Known Contacts</h3>
           <div className="space-y-1">
-            {users.map(u => (
+            {discoveredUsers.map(u => (
               <button
                 key={u.id}
                 onClick={() => startDM(u)}
@@ -115,15 +126,15 @@ const Sidebar = () => {
                 <span className="text-sm font-bold truncate">{u.username}</span>
               </button>
             ))}
-            {users.length === 0 && (
-              <p className="px-3 py-2 text-[10px] text-slate-600 italic">No other users online.</p>
+            {discoveredUsers.length === 0 && (
+              <p className="px-3 py-2 text-[10px] text-slate-600 italic">No contacts found. Join a group to find people.</p>
             )}
           </div>
         </div>
 
         <div className="space-y-1">
           <h3 className="px-3 py-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Group Chats</h3>
-          {groups.filter(g => !g.isDM && g.members.includes(user.id)).map((group) => (
+          {groups.filter(g => !g.isDM).map((group) => (
             <button
               key={group.id}
               onClick={() => navigate(`/chat/${group.id}`)}

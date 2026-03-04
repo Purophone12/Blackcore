@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { deriveGroupKey, encryptMessage, decryptMessage, encryptBlob, decryptBlob } from '../utils/crypto';
-import { io } from 'socket.io-client';
+import { db, auth, storage } from '../firebase';
+import { collection, addDoc, query, where, onSnapshot, doc, getDoc, updateDoc, arrayUnion, orderBy, limit } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { useAuthState } from 'react-firebase-hooks/auth';
 import VoiceCall from './VoiceCall';
 
 const Chat = () => {
@@ -16,49 +19,56 @@ const Chat = () => {
   const [isTyping, setIsTyping] = useState(false);
   const [groupInfo, setGroupInfo] = useState({ name: 'Group Chat' });
   const [symmetricKey, setSymmetricKey] = useState(null);
-  const [activeCall, setActiveCall] = useState(null); // { otherUser, offer }
-  const socket = useRef(null);
+  const [activeCall, setActiveCall] = useState(null); // { otherUser, offer, callId }
   const scrollRef = useRef();
   const navigate = useNavigate();
+  const [user] = useAuthState(auth);
 
-  const user = JSON.parse(localStorage.getItem('blackcore_user')) || { username: 'User', id: 'mock-uid' };
-  const token = localStorage.getItem('blackcore_token');
-
+  // --- Signaling State for Voice Call (Move to group subcollection) ---
   useEffect(() => {
-    socket.current = io('http://localhost:5001');
-    socket.current.emit('register', user.id);
+    if (!user || !groupId) return;
 
-    socket.current.on('incoming-call', async ({ from, offer }) => {
-      const res = await fetch('http://localhost:5001/api/users', {
-          headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const users = await res.json();
-      const caller = users.find(u => u.id === from);
-      setActiveCall({ otherUser: caller, offer });
+    // Listen for incoming calls in Firestore group subcollection
+    const callsQuery = query(
+      collection(db, 'groups', groupId, 'calls'),
+      where('to', '==', user.uid),
+      where('status', '==', 'ringing'),
+      limit(1)
+    );
+
+    const unsubscribeCalls = onSnapshot(callsQuery, async (snapshot) => {
+      if (!snapshot.empty) {
+        const callDoc = snapshot.docs[0];
+        const callData = callDoc.data();
+
+        // Use placeholder for caller username if we don't have a users collection
+        const callerName = `Member ${callData.from.slice(0, 4)}`;
+
+        setActiveCall({
+          otherUser: { id: callData.from, username: callerName },
+          offer: callData.offer,
+          callId: callDoc.id
+        });
+      }
     });
 
-    return () => {
-      if (socket.current) socket.current.disconnect();
-    };
-  }, [user.id, token]);
+    return () => unsubscribeCalls();
+  }, [user, groupId]);
 
   useEffect(() => {
     async function fetchGroupInfo() {
-      if (!groupId || !token) return;
+      if (!groupId) return;
       try {
-        const response = await fetch(`http://localhost:5001/api/groups/${groupId}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const data = await response.json();
-        if (data && !data.error) {
-          setGroupInfo(data);
+        const docSnap = await getDoc(doc(db, 'groups', groupId));
+        if (docSnap.exists()) {
+          setGroupInfo({ id: docSnap.id, ...docSnap.data() });
         }
       } catch (err) {
         console.error("Error fetching group info:", err);
       }
     }
     fetchGroupInfo();
-  }, [groupId, token]);
+  }, [groupId]);
 
   useEffect(() => {
     async function initKey() {
@@ -73,19 +83,18 @@ const Chat = () => {
     initKey();
   }, [groupId]);
 
-  const fetchMessages = async () => {
-    if (!symmetricKey || !groupId || !token) return;
-    try {
-      const response = await fetch(`http://localhost:5001/api/messages/${groupId}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = await response.json();
-      if (data.error) {
-          console.error("Server error fetching messages:", data.error);
-          return;
-      }
+  useEffect(() => {
+    if (!symmetricKey || !groupId) return;
 
-      const decryptedMessages = await Promise.all(data.map(async (msg) => {
+    const messagesQuery = query(
+      collection(db, 'messages'),
+      where('groupId', '==', groupId),
+      orderBy('createdAt', 'asc')
+    );
+
+    const unsubscribeMessages = onSnapshot(messagesQuery, async (snapshot) => {
+      const decryptedMessages = await Promise.all(snapshot.docs.map(async (doc) => {
+        const msg = doc.data();
         let text = msg.text;
         if (msg.isEncrypted && symmetricKey) {
           try {
@@ -100,19 +109,13 @@ const Chat = () => {
             text = "[Decryption Failed]";
           }
         }
-        return { ...msg, text };
+        return { id: doc.id, ...msg, text };
       }));
       setMessages(decryptedMessages);
-    } catch (err) {
-      console.error("Error fetching messages:", err);
-    }
-  };
+    });
 
-  useEffect(() => {
-    fetchMessages();
-    const interval = setInterval(fetchMessages, 3000);
-    return () => clearInterval(interval);
-  }, [symmetricKey, groupId, token]);
+    return () => unsubscribeMessages();
+  }, [symmetricKey, groupId]);
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -121,31 +124,24 @@ const Chat = () => {
   const sendMessage = async (e) => {
     e.preventDefault();
     const textToSend = newMessage.trim();
-    if (!textToSend || !symmetricKey || !token) return;
+    if (!textToSend || !symmetricKey || !user) return;
 
     try {
       const { ciphertext, iv } = await encryptMessage(newMessage, symmetricKey);
       const ciphertextBase64 = btoa(String.fromCharCode(...new Uint8Array(ciphertext)));
       const ivBase64 = btoa(String.fromCharCode(...new Uint8Array(iv)));
 
-      await fetch('http://localhost:5001/api/messages', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          text: ciphertextBase64,
-          iv: ivBase64,
-          uid: user.id,
-          groupId: groupId,
-          displayName: user.username,
-          isEncrypted: true
-        })
+      await addDoc(collection(db, 'messages'), {
+        text: ciphertextBase64,
+        iv: ivBase64,
+        uid: user.uid,
+        groupId: groupId,
+        displayName: user.displayName || user.email.split('@')[0],
+        isEncrypted: true,
+        createdAt: new Date().toISOString()
       });
 
       setNewMessage('');
-      fetchMessages();
     } catch (err) {
       console.error("Error sending message:", err);
     }
@@ -162,44 +158,30 @@ const Chat = () => {
   };
 
   const uploadFile = async () => {
-    if (!file || !symmetricKey || !token) return;
+    if (!file || !symmetricKey || !user) return;
     setUploading(true);
     try {
       const { ciphertext, iv } = await encryptBlob(file, symmetricKey);
       const ivBase64 = btoa(String.fromCharCode(...new Uint8Array(iv)));
 
-      const formData = new FormData();
-      formData.append('file', new Blob([ciphertext]), file.name + '.enc');
+      const fileRef = ref(storage, `uploads/${Date.now()}-${file.name}.enc`);
+      await uploadBytes(fileRef, new Blob([ciphertext]));
+      const downloadURL = await getDownloadURL(fileRef);
 
-      const response = await fetch('http://localhost:5001/upload', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-        body: formData
-      });
-
-      const result = await response.json();
-
-      await fetch('http://localhost:5001/api/messages', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          text: btoa(result.filename),
-          iv: ivBase64,
-          uid: user.id,
-          groupId: groupId,
-          displayName: user.username,
-          isEncrypted: true,
-          type: 'file',
-          originalName: file.name,
-          mimetype: file.type
-        })
+      await addDoc(collection(db, 'messages'), {
+        text: btoa(downloadURL),
+        iv: ivBase64,
+        uid: user.uid,
+        groupId: groupId,
+        displayName: user.displayName || user.email.split('@')[0],
+        isEncrypted: true,
+        type: 'file',
+        originalName: file.name,
+        mimetype: file.type,
+        createdAt: new Date().toISOString()
       });
 
       setFile(null);
-      fetchMessages();
     } catch (err) {
       console.error("File upload failed:", err);
     } finally {
@@ -208,11 +190,9 @@ const Chat = () => {
   };
 
   const downloadFile = async (msg) => {
-    if (!token) return;
     try {
-      const response = await fetch(`http://localhost:5001/download/${atob(msg.text)}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const downloadURL = atob(msg.text);
+      const response = await fetch(downloadURL);
       const ciphertext = await response.arrayBuffer();
       const iv = Uint8Array.from(atob(msg.iv), c => c.charCodeAt(0));
 
@@ -231,8 +211,7 @@ const Chat = () => {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('blackcore_user');
-    localStorage.removeItem('blackcore_token');
+    auth.signOut();
     navigate('/');
   };
 
@@ -254,16 +233,15 @@ const Chat = () => {
           <button onClick={() => setIsSearching(!isSearching)} className={`p-2 rounded-full transition-colors mr-1 ${isSearching ? 'text-primary bg-primary/10' : 'text-slate-400 hover:bg-primary/10'}`}>
             <span className="material-symbols-outlined">search</span>
           </button>
-          {groupInfo.isDM && (
+          {groupInfo.members && groupInfo.members.length > 1 && (
              <button
                onClick={async () => {
-                  const otherUserId = groupInfo.members.find(m => m !== user.id);
-                  const res = await fetch('http://localhost:5001/api/users', {
-                      headers: { 'Authorization': `Bearer ${token}` }
-                  });
-                  const users = await res.json();
-                  const otherUser = users.find(u => u.id === otherUserId);
-                  setActiveCall({ otherUser });
+                  const otherUserId = groupInfo.members.find(m => m !== user.uid);
+                  let otherUserName = `Member ${otherUserId.slice(0, 4)}`;
+                  if (groupInfo.isDM) {
+                    otherUserName = groupInfo.name.split('&')[1]?.trim() || otherUserName;
+                  }
+                  setActiveCall({ otherUser: { id: otherUserId, username: otherUserName } });
                }}
                className="p-2 text-primary hover:bg-primary/10 rounded-full transition-colors mr-1"
              >
@@ -300,8 +278,8 @@ const Chat = () => {
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
         {filteredMessages.map((msg) => (
-          <div key={msg.id} className={`flex flex-col ${msg.uid === user.id ? 'items-end' : 'items-start'} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
-            <div className={`flex items-center gap-2 mb-1 px-2 ${msg.uid === user.id ? 'flex-row-reverse' : ''}`}>
+          <div key={msg.id} className={`flex flex-col ${msg.uid === user?.uid ? 'items-end' : 'items-start'} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
+            <div className={`flex items-center gap-2 mb-1 px-2 ${msg.uid === user?.uid ? 'flex-row-reverse' : ''}`}>
               <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
                 {msg.displayName || 'Member'}
               </span>
@@ -310,7 +288,7 @@ const Chat = () => {
                 </span>
             </div>
             <div className={`relative group max-w-[80%] p-4 rounded-2xl shadow-lg transition-all ${
-              msg.uid === user.id
+              msg.uid === user?.uid
                 ? 'bg-primary text-white rounded-tr-none shadow-primary/10'
                 : 'bg-card-dark border border-primary/10 rounded-tl-none'
             }`}>
@@ -343,18 +321,6 @@ const Chat = () => {
         ))}
         <div ref={scrollRef} />
       </div>
-
-      {/* Typing Indicator */}
-      {isTyping && (
-        <div className="px-6 py-2 flex items-center gap-2 animate-pulse">
-           <div className="flex gap-1">
-              <div className="size-1 bg-primary rounded-full"></div>
-              <div className="size-1 bg-primary rounded-full"></div>
-              <div className="size-1 bg-primary rounded-full"></div>
-           </div>
-           <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Someone is typing...</span>
-        </div>
-      )}
 
       {/* Input */}
       <div className="px-4">
@@ -399,6 +365,8 @@ const Chat = () => {
           user={user}
           otherUser={activeCall.otherUser}
           incomingOffer={activeCall.offer}
+          callId={activeCall.callId}
+          groupId={groupId}
           onEndCall={() => setActiveCall(null)}
         />
       )}

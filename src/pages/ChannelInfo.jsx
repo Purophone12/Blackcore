@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { db, auth } from '../firebase';
+import { doc, updateDoc, arrayRemove, arrayUnion, onSnapshot, collection } from 'firebase/firestore';
 import ChannelHeader from '../components/ChannelHeader';
 import QuickActions from '../components/QuickActions';
 import Settings from '../components/Settings';
 import MemberList from '../components/MemberList';
-import { deriveGroupKey, encryptMessage, decryptMessage } from '../utils/crypto';
+import { deriveGroupKey } from '../utils/crypto';
 
 function ChannelInfo() {
   const { groupId } = useParams();
@@ -20,31 +22,21 @@ function ChannelInfo() {
   const [newMemberId, setNewMemberId] = useState('');
 
   const navigate = useNavigate();
-  const user = JSON.parse(localStorage.getItem('blackcore_user'));
-  const token = localStorage.getItem('blackcore_token');
 
-  const fetchGroupData = async () => {
-    if (!groupId || !token) return;
-    try {
-      const response = await fetch(`http://localhost:5001/api/groups/${groupId}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = await response.json();
-      if (data && !data.error) {
+  useEffect(() => {
+    if (!groupId) return;
+
+    const unsubscribe = onSnapshot(doc(db, 'groups', groupId), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = { id: docSnap.id, ...docSnap.data() };
         setEditName(data.name);
         setEditDesc(data.description);
 
-        // Fetch users to get names for member IDs
-        const uRes = await fetch('http://localhost:5001/api/users', {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const allUsers = await uRes.json();
-
+        // Use placeholders for member names if we don't have a users collection
         const memberDetails = (data.members || []).map(mid => {
-           const memberUser = allUsers.find(u => u.id === mid);
            return {
              id: mid,
-             name: memberUser ? (mid === user.id ? `${memberUser.username} (You)` : memberUser.username) : `Member ${mid.slice(0, 4)}`,
+             name: mid === auth.currentUser?.uid ? (auth.currentUser.displayName || "You") : `Member ${mid.slice(0, 4)}`,
              status: "Active",
              isOnline: true,
              isOwner: mid === data.owner,
@@ -54,20 +46,16 @@ function ChannelInfo() {
 
         setGroupData({ ...data, memberDetails });
       }
-    } catch (err) {
-      console.error("Error fetching group data:", err);
-    }
-  };
+    });
 
-  useEffect(() => {
-    fetchGroupData();
+    return () => unsubscribe();
   }, [groupId]);
 
   useEffect(() => {
     async function initCrypto() {
       if (!groupId) return;
       try {
-        const key = await deriveGroupKey(groupId);
+        await deriveGroupKey(groupId);
         setCryptoStatus("E2EE Verified & Active");
       } catch (e) {
         setCryptoStatus("E2EE Initialization Failed");
@@ -77,16 +65,10 @@ function ChannelInfo() {
   }, [groupId]);
 
   const leaveGroup = async () => {
-    if (!groupId || !user) return;
+    if (!groupId || !auth.currentUser) return;
     try {
-      const updatedMembers = groupData.members.filter(m => m !== user.id);
-      await fetch(`http://localhost:5001/api/groups/${groupId}`, {
-          method: 'PUT',
-          headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({ members: updatedMembers })
+      await updateDoc(doc(db, 'groups', groupId), {
+        members: arrayRemove(auth.currentUser.uid)
       });
       navigate('/groups');
     } catch (err) {
@@ -97,16 +79,11 @@ function ChannelInfo() {
 
   const handleUpdateGroup = async () => {
     try {
-      await fetch(`http://localhost:5001/api/groups/${groupId}`, {
-          method: 'PUT',
-          headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({ name: editName, description: editDesc })
+      await updateDoc(doc(db, 'groups', groupId), {
+        name: editName,
+        description: editDesc
       });
       setIsEditing(false);
-      fetchGroupData();
     } catch (err) {
       console.error("Error updating group:", err);
     }
@@ -115,18 +92,11 @@ function ChannelInfo() {
   const addMember = async () => {
     if (!newMemberId.trim()) return;
     try {
-      const updatedMembers = [...groupData.members, newMemberId.trim()];
-      await fetch(`http://localhost:5001/api/groups/${groupId}`, {
-          method: 'PUT',
-          headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({ members: updatedMembers })
+      await updateDoc(doc(db, 'groups', groupId), {
+        members: arrayUnion(newMemberId.trim())
       });
       setNewMemberId('');
       setShowAddMember(false);
-      fetchGroupData();
     } catch (err) {
       console.error("Error adding member:", err);
     }
@@ -174,7 +144,7 @@ function ChannelInfo() {
           membersCount={groupData.members?.length || 0}
           type={groupData.isDM ? "Private DM" : "Public Channel"}
           description={groupData.description}
-          avatarUrl="https://lh3.googleusercontent.com/aida-public/AB6AXuBWKEaapNrVIeemjUKVc0P9LzaEuIeBFPQn_Mg86k1IArk57K1p8MPcOP1AcFNnh4A5D2CBv1ABY-UAXbT_HpCWQz_zuE0a4D3-k0CECOyYjt9C6TZ2GZqd4hGGTLLM0tHvgd-o10DzWa4_Axb0BD9wrEBf1u68o9Al5hOK-5ziUr2GNnH5sKyM64a2OBzc9xDuPPBkwML0RBfZQnicXF7eXcvMnrU2nMtFXjI7GNP1Jw28Zu2kCENmt9Ik1nh_atRr1M7AequlOI8"
+          avatarUrl="https://lh3.googleusercontent.com/aida-public/AB6AXuBr6cXaIISu6oPFGXYA6zbIOctFvv_imd1hyXauGLnB3A-gsys1bLjvKxRZfNEmTtGKhh8o-fQISlep7RyXNx0qQ-XM5u5VZXj1TixBa6FgqA71rCf4E4keZAO2YL_H1W98nc0RL167WHBihBPvjinBhtY7YU3QL_s-c4TqJFnp2R7iUa5gYNo3XpTmrssARQeRUaVI0XDdd0Ks7RNQaD3V_uO0P0AbBpMQOyIIFoTizjM1eBv8ZW2G8YNXcZr3RAhvJu8ia7QIuMw"
         />
       )}
 
@@ -242,17 +212,10 @@ function ChannelInfo() {
       <MemberList
         members={groupData.memberDetails || []}
         onRemoveMember={async (memberId) => {
-            if (memberId === user.id) return;
-            const updatedMembers = groupData.members.filter(m => m !== memberId);
-            await fetch(`http://localhost:5001/api/groups/${groupId}`, {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({ members: updatedMembers })
+            if (memberId === auth.currentUser?.uid) return;
+            await updateDoc(doc(db, 'groups', groupId), {
+              members: arrayRemove(memberId)
             });
-            fetchGroupData();
         }}
       />
 

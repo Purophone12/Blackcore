@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { io } from 'socket.io-client';
+import { db } from '../firebase';
+import { doc, setDoc, onSnapshot, updateDoc, collection, addDoc } from 'firebase/firestore';
 
-const VoiceCall = ({ otherUser, user, onEndCall, incomingOffer }) => {
+const VoiceCall = ({ otherUser, user, onEndCall, incomingOffer, callId: initialCallId, groupId }) => {
   const [callStatus, setCallStatus] = useState(incomingOffer ? 'incoming' : 'calling');
   const [localStream, setLocalStream] = useState(null);
   const peerConnection = useRef(null);
-  const socket = useRef(null);
   const remoteAudioRef = useRef(null);
+  const [callId, setCallId] = useState(initialCallId);
 
   const configuration = {
     iceServers: [
@@ -15,27 +16,9 @@ const VoiceCall = ({ otherUser, user, onEndCall, incomingOffer }) => {
   };
 
   useEffect(() => {
-    socket.current = io('http://localhost:5001');
-    socket.current.emit('register', user.id);
-
-    socket.current.on('call-answered', async ({ answer }) => {
-      console.log('Call answered');
-      await peerConnection.current.setRemoteDescription(new RTCSessionDescription(answer));
-      setCallStatus('connected');
-    });
-
-    socket.current.on('ice-candidate', async ({ candidate }) => {
-      console.log('New ICE candidate');
-      try {
-        await peerConnection.current.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch (e) {
-        console.error('Error adding ice candidate', e);
-      }
-    });
-
-    socket.current.on('call-ended', () => {
-      endCall();
-    });
+    let unsubscribe;
+    let unsubscribeOfferCandidates;
+    let unsubscribeAnswerCandidates;
 
     const initCall = async () => {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -44,9 +27,12 @@ const VoiceCall = ({ otherUser, user, onEndCall, incomingOffer }) => {
       peerConnection.current = new RTCPeerConnection(configuration);
       stream.getTracks().forEach(track => peerConnection.current.addTrack(track, stream));
 
+      let currentCallId = initialCallId;
+
       peerConnection.current.onicecandidate = (event) => {
-        if (event.candidate) {
-          socket.current.emit('ice-candidate', { to: otherUser.id, candidate: event.candidate });
+        if (event.candidate && currentCallId && groupId) {
+          const collectionName = incomingOffer ? 'answerCandidates' : 'offerCandidates';
+          addDoc(collection(db, 'groups', groupId, 'calls', currentCallId, collectionName), event.candidate.toJSON());
         }
       };
 
@@ -57,15 +43,71 @@ const VoiceCall = ({ otherUser, user, onEndCall, incomingOffer }) => {
       };
 
       if (incomingOffer) {
+        setCallId(initialCallId);
+
+        // Listen for offer candidates
+        unsubscribeOfferCandidates = onSnapshot(collection(db, 'groups', groupId, 'calls', initialCallId, 'offerCandidates'), (snapshot) => {
+          snapshot.docChanges().forEach(async (change) => {
+            if (change.type === 'added') {
+              let data = change.doc.data();
+              await peerConnection.current.addIceCandidate(new RTCIceCandidate(data));
+            }
+          });
+        });
+
         await peerConnection.current.setRemoteDescription(new RTCSessionDescription(incomingOffer));
         const answer = await peerConnection.current.createAnswer();
         await peerConnection.current.setLocalDescription(answer);
-        socket.current.emit('answer-call', { to: otherUser.id, answer });
+
+        await updateDoc(doc(db, 'groups', groupId, 'calls', initialCallId), {
+          answer: { type: answer.type, sdp: answer.sdp },
+          status: 'connected'
+        });
         setCallStatus('connected');
+
+        unsubscribe = onSnapshot(doc(db, 'groups', groupId, 'calls', initialCallId), (snapshot) => {
+           if (!snapshot.exists() || snapshot.data().status === 'ended') {
+              endCall();
+           }
+        });
+
       } else {
+        const callDocRef = doc(collection(db, 'groups', groupId, 'calls'));
+        currentCallId = callDocRef.id;
+        setCallId(currentCallId);
+
         const offer = await peerConnection.current.createOffer();
         await peerConnection.current.setLocalDescription(offer);
-        socket.current.emit('call-user', { to: otherUser.id, from: user.id, offer });
+
+        await setDoc(callDocRef, {
+          from: user.uid,
+          to: otherUser.id,
+          offer: { type: offer.type, sdp: offer.sdp },
+          status: 'ringing',
+          createdAt: new Date().toISOString()
+        });
+
+        // Listen for answer
+        unsubscribe = onSnapshot(callDocRef, async (snapshot) => {
+          const data = snapshot.data();
+          if (data?.answer && callStatus !== 'connected') {
+            await peerConnection.current.setRemoteDescription(new RTCSessionDescription(data.answer));
+            setCallStatus('connected');
+          }
+          if (data?.status === 'ended') {
+            endCall();
+          }
+        });
+
+        // Listen for answer candidates
+        unsubscribeAnswerCandidates = onSnapshot(collection(db, 'groups', groupId, 'calls', currentCallId, 'answerCandidates'), (snapshot) => {
+          snapshot.docChanges().forEach(async (change) => {
+            if (change.type === 'added') {
+              let data = change.doc.data();
+              await peerConnection.current.addIceCandidate(new RTCIceCandidate(data));
+            }
+          });
+        });
       }
     };
 
@@ -75,20 +117,23 @@ const VoiceCall = ({ otherUser, user, onEndCall, incomingOffer }) => {
     });
 
     return () => {
-      endCall();
+      if (unsubscribe) unsubscribe();
+      if (unsubscribeOfferCandidates) unsubscribeOfferCandidates();
+      if (unsubscribeAnswerCandidates) unsubscribeAnswerCandidates();
     };
-  }, []);
+  }, [callId, groupId]);
 
-  const endCall = () => {
+  const endCall = async () => {
     if (localStream) {
       localStream.getTracks().forEach(track => track.stop());
     }
     if (peerConnection.current) {
       peerConnection.current.close();
     }
-    if (socket.current) {
-      socket.current.emit('end-call', { to: otherUser.id });
-      socket.current.disconnect();
+    if (callId && groupId) {
+      try {
+        await updateDoc(doc(db, 'groups', groupId, 'calls', callId), { status: 'ended' });
+      } catch (e) {}
     }
     onEndCall();
   };
@@ -100,7 +145,7 @@ const VoiceCall = ({ otherUser, user, onEndCall, incomingOffer }) => {
            <div className={`absolute inset-0 bg-primary/20 rounded-full animate-ping ${callStatus === 'connected' ? 'hidden' : ''}`}></div>
            <div className="relative size-full rounded-full bg-gradient-to-br from-primary to-purple-900 p-1 shadow-2xl">
               <div className="size-full rounded-full bg-card-dark flex items-center justify-center text-primary text-4xl font-bold">
-                 {otherUser.username.charAt(0)}
+                 {otherUser.username?.charAt(0) || 'U'}
               </div>
            </div>
         </div>
