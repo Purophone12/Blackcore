@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { db, auth } from '../firebase';
-import { doc, updateDoc, arrayRemove, arrayUnion, onSnapshot, collection } from 'firebase/firestore';
+import { doc, updateDoc, arrayRemove, arrayUnion, onSnapshot, collection, getDocs } from 'firebase/firestore';
+import { wrapOnSnapshot, wrapUpdateDoc, wrapGetDocs } from '../utils/firebaseMock';
 import ChannelHeader from '../components/ChannelHeader';
 import QuickActions from '../components/QuickActions';
 import Settings from '../components/Settings';
@@ -26,17 +27,21 @@ function ChannelInfo() {
   useEffect(() => {
     if (!groupId) return;
 
-    const unsubscribe = onSnapshot(doc(db, 'groups', groupId), (docSnap) => {
+    const unsubscribe = wrapOnSnapshot(onSnapshot, doc(db, 'groups', groupId), async (docSnap) => {
       if (docSnap.exists()) {
         const data = { id: docSnap.id, ...docSnap.data() };
         setEditName(data.name);
         setEditDesc(data.description);
 
-        // Use placeholders for member names if we don't have a users collection
+        // Resolve member names via users collection fallback
+        const snapshot = await wrapGetDocs(getDocs, collection(db, 'users'));
+        const allUsers = snapshot.docs.map(d => d.data());
+
         const memberDetails = (data.members || []).map(mid => {
+           const u = allUsers.find(user => user.uid === mid);
            return {
              id: mid,
-             name: mid === auth.currentUser?.uid ? (auth.currentUser.displayName || "You") : `Member ${mid.slice(0, 4)}`,
+             name: u ? u.username : (mid === auth.currentUser?.uid ? (auth.currentUser.displayName || "You") : `Member ${mid.slice(0, 4)}`),
              status: "Active",
              isOnline: true,
              isOwner: mid === data.owner,

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { auth } from '../firebase';
+import { auth, db } from '../firebase';
 import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
 import { useNavigate, Link } from 'react-router-dom';
 
 const Signup = () => {
@@ -28,7 +29,16 @@ const Signup = () => {
     setLoading(true);
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      await updateProfile(userCredential.user, { displayName: username });
+      const user = userCredential.user;
+      await updateProfile(user, { displayName: username });
+
+      // Sync with minimal user registry for discovery
+      await setDoc(doc(db, 'users', user.uid), {
+        username: username,
+        uid: user.uid,
+        createdAt: new Date().toISOString()
+      });
+
       navigate('/groups');
     } catch (err) {
       console.error("Signup error:", err);
@@ -39,79 +49,72 @@ const Signup = () => {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen px-6 bg-background-dark text-white font-body mesh-gradient relative overflow-hidden">
-      {/* Decorative Blur */}
-      <div className="absolute bottom-[-10%] left-[-10%] size-96 bg-primary/10 rounded-full blur-[120px] pointer-events-none"></div>
-
-      <div className="w-full max-w-sm space-y-8 animate-in fade-in zoom-in-95 duration-500 z-10">
+    <div className="flex flex-col items-center justify-center min-h-screen px-6 bg-background-dark text-white font-display">
+      <div className="w-full max-w-sm space-y-8 animate-in fade-in zoom-in-95 duration-500">
         <div className="text-center">
-          <div onClick={() => navigate('/')} className="inline-block p-1 rounded-3xl bg-gradient-to-b from-primary/30 to-transparent mb-6 cursor-pointer hover:scale-105 transition-transform active:scale-95">
-            <div className="bg-background-dark/80 backdrop-blur-xl p-3 rounded-2xl shadow-xl">
-              <img src="/logo.png" alt="Blackcore Logo" className="size-16 object-contain" />
-            </div>
+          <div onClick={() => navigate('/')} className="inline-block p-4 rounded-2xl bg-primary/20 neon-glow mb-4 cursor-pointer hover:scale-110 transition-transform">
+            <span className="material-symbols-outlined text-4xl text-primary">hub</span>
           </div>
-          <h2 className="text-4xl font-extrabold tracking-tighter font-display">Join the Mission</h2>
+          <h2 className="text-4xl font-bold tracking-tighter">Join the Mission</h2>
           <p className="text-slate-500 mt-2 font-medium">Create your secure identity.</p>
         </div>
 
-        <div className="glass-panel p-8 rounded-[2.5rem] shadow-2xl">
-          <form onSubmit={handleSignup} className="space-y-4">
-            <div>
-              <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2 ml-1">Username</label>
-              <input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="w-full p-4 rounded-2xl bg-black/20 border border-white/5 focus:border-primary outline-none transition-all text-white placeholder:text-slate-700"
-                placeholder="Agent Zero"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2 ml-1">Email</label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full p-4 rounded-2xl bg-black/20 border border-white/5 focus:border-primary outline-none transition-all text-white placeholder:text-slate-700"
-                placeholder="name@blackcore.io"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2 ml-1">Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full p-4 rounded-2xl bg-black/20 border border-white/5 focus:border-primary outline-none transition-all text-white placeholder:text-slate-700"
-                placeholder="••••••••"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2 ml-1">Confirm Password</label>
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                className="w-full p-4 rounded-2xl bg-black/20 border border-white/5 focus:border-primary outline-none transition-all text-white placeholder:text-slate-700"
-                placeholder="••••••••"
-                required
-              />
-            </div>
+        <form onSubmit={handleSignup} className="space-y-4">
+          <div>
+            <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2 ml-1">Username</label>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="w-full p-4 rounded-xl bg-card-dark border border-primary/10 focus:border-primary outline-none transition-all shadow-lg shadow-primary/5 text-white"
+              placeholder="Agent Zero"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2 ml-1">Email</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full p-4 rounded-xl bg-card-dark border border-primary/10 focus:border-primary outline-none transition-all shadow-lg shadow-primary/5 text-white"
+              placeholder="name@blackcore.io"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2 ml-1">Password</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full p-4 rounded-xl bg-card-dark border border-primary/10 focus:border-primary outline-none transition-all shadow-lg shadow-primary/5 text-white"
+              placeholder="••••••••"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2 ml-1">Confirm Password</label>
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              className="w-full p-4 rounded-xl bg-card-dark border border-primary/10 focus:border-primary outline-none transition-all shadow-lg shadow-primary/5 text-white"
+              placeholder="••••••••"
+              required
+            />
+          </div>
 
-            {error && <p className="text-red-500 text-[10px] font-bold uppercase tracking-widest px-1 animate-pulse">{error}</p>}
+          {error && <p className="text-red-500 text-[10px] font-bold uppercase tracking-widest px-1 animate-pulse">{error}</p>}
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full p-5 rounded-2xl bg-primary text-white font-bold text-sm uppercase tracking-[0.2em] hover:bg-primary/80 transition-all shadow-lg shadow-primary/20 disabled:opacity-50 mt-2"
-            >
-              {loading ? 'Processing...' : 'Create Account'}
-            </button>
-          </form>
-        </div>
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full p-5 rounded-xl bg-primary text-white font-bold text-sm uppercase tracking-[0.2em] hover:bg-primary/80 transition-all shadow-2xl shadow-primary/20 disabled:opacity-50"
+          >
+            {loading ? 'Processing...' : 'Create Account'}
+          </button>
+        </form>
 
         <div className="text-center pt-4">
           <Link
